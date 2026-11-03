@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -13,8 +13,13 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const (
+var (
 	MaxOutputTokens int64 = 250
+	W                     = os.Stdout
+)
+
+var (
+	ChatbotInputPrompt = `I'm a helpful chatbot! Ask me anything:`
 )
 
 func main() {
@@ -22,33 +27,45 @@ func main() {
 	pflag.Parse()
 
 	if err := godotenv.Load(); err != nil {
-		log.Println(err)
+		fmt.Fprintln(W, err)
 		os.Exit(1)
 	}
 
 	apikey := os.Getenv("OPENAI_API_KEY")
 	if apikey == "" {
-		log.Println("openai api key is not set")
+		fmt.Fprintln(W, "openai api key is not set")
 		os.Exit(1)
 	}
+
+	fmt.Fprintln(W, ChatbotInputPrompt)
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(W, "reading standard input %v", err)
+		os.Exit(1)
+	}
+
+	inputPrompt := scanner.Text()
 
 	ctx := context.Background()
 	client := openai.NewClient(
 		option.WithAPIKey(apikey),
 	)
 
-	prompt := "Who was the first person to land on the Moon?"
+	// prompt := "Who was the first person to land on the Moon?"
 
 	resp, err := client.Responses.New(ctx, responses.ResponseNewParams{
-		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(prompt)},
+		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(inputPrompt)},
 		Model:           openai.ChatModelGPT5_4Mini2026_03_17,
 		Temperature:     openai.Float(*temp),
 		MaxOutputTokens: openai.Int(MaxOutputTokens),
 	})
 	if err != nil {
-		log.Printf("error getting response from model: %v\n", err)
+		fmt.Fprintf(W, "error getting response from model: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Response from model (with temperature of %0.2f):\n%s", *temp, resp.OutputText())
+	fmt.Fprintf(W, "Response from model (with temperature of %0.2f):\n%s", *temp, resp.OutputText())
 }
