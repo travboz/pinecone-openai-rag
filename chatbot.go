@@ -9,7 +9,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-func newSpanishTranslator(
+func newInteractiveChatbot(
 	ctx context.Context,
 	llmClient openai.Client,
 	temperature float64,
