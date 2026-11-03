@@ -14,12 +14,15 @@ import (
 )
 
 var (
-	MaxOutputTokens int64 = 250
-	W                     = os.Stdout
+	DefaultQuery    string = "Who was the first person to land on the Moon?"
+	MaxOutputTokens int64  = 250
+	W                      = os.Stdout
 )
 
 var (
-	ChatbotInputPrompt = `I'm a helpful chatbot! Ask me anything:`
+	ChatbotInputPrompt          = `I'm a helpful chatbot! Ask me anything:`
+	ChatbotPiratePrompt         = `Ahoy! Got questions? Spit 'em out, ye scallywag!`
+	ChatbotSystemPirateTemplate = `Respond to the following like a pirate: %s`
 )
 
 func main() {
@@ -37,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(W, ChatbotInputPrompt)
+	fmt.Fprintln(W, ChatbotPiratePrompt)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -47,17 +50,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	inputPrompt := scanner.Text()
+	rawInputPrompt := scanner.Text()
+	augmentedPrompt := fmt.Sprintf(ChatbotSystemPirateTemplate, rawInputPrompt)
 
 	ctx := context.Background()
 	client := openai.NewClient(
 		option.WithAPIKey(apikey),
 	)
 
-	// prompt := "Who was the first person to land on the Moon?"
-
 	resp, err := client.Responses.New(ctx, responses.ResponseNewParams{
-		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(inputPrompt)},
+		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(augmentedPrompt)},
 		Model:           openai.ChatModelGPT5_4Mini2026_03_17,
 		Temperature:     openai.Float(*temp),
 		MaxOutputTokens: openai.Int(MaxOutputTokens),
