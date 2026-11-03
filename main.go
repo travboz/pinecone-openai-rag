@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -18,6 +19,8 @@ var (
 	MaxOutputTokens int64           = 250
 	W               io.Writer       = os.Stdout
 	ctx             context.Context = context.Background()
+
+	conversationHistory string = ""
 )
 
 func main() {
@@ -47,33 +50,43 @@ func main() {
 		openai.ChatModelGPT5_4Mini2026_03_17,
 	)
 
-	fmt.Fprint(W, ChatbotHelpfulAssistantInitial)
-
 	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		input := scanner.Text()
 
-		if input == "exit" {
+	assistantMessage := "Assistant: How can I help you today?\n\nUser: "
+	fmt.Print(assistantMessage)
+	scanner.Scan()
+	userInput := scanner.Text()
+
+	conversationHistory += ChatbotHelpfulAssistantInitial + userInput
+
+	// Chat loop:
+	for {
+		// ! Issue: typing in 'exit' doesn't exit. It just continues on to send the input to the LLM...
+		if userInput == "exit" {
 			break
 		}
 
 		// Chat interaction:
-		rawInputPrompt := scanner.Text()
-		// augmentedPrompt := fmt.Sprintf(ChatbotSystemSpanishTranslateFocusedTemplate, rawInputPrompt)
-
-		response, err := chatbot(rawInputPrompt)
+		response, err := chatbot(conversationHistory)
 		if err != nil {
-			fmt.Fprintf(W, "failed to translate: %v", err)
+			fmt.Fprintf(W, "generation failed: %v", err)
+			log.Println(conversationHistory)
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(W, "\nAssistant (temp=%0.1f): %s\n", *temp, response)
+		llmResponseText := fmt.Sprintf("\nAssistant: %s", response)
+		fmt.Fprintln(W, llmResponseText)
+
 		fmt.Fprint(W, "\nUser: ")
+		scanner.Scan()
+		userInput := scanner.Text()
+
+		// Append new history.
+		conversationHistory += fmt.Sprintf("%s\nUser: %s", llmResponseText, userInput)
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(W, "reading standard input %v", err)
+		fmt.Fprintf(W, "scanner error: %v", err)
 		os.Exit(1)
 	}
-
 }
