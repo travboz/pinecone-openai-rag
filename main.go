@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -24,6 +25,8 @@ var (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
 	temp := pflag.Float64("temp", 0.5, "set the model's temperature")
 	pflag.Parse()
 
@@ -60,12 +63,7 @@ func main() {
 	conversationHistory += ChatbotHelpfulAssistantInitial + userInput
 
 	// Chat loop:
-	for {
-		// ! Issue: typing in 'exit' doesn't exit. It just continues on to send the input to the LLM...
-		if userInput == "exit" {
-			break
-		}
-
+	for userInput != "exit" {
 		// Chat interaction:
 		response, err := chatbot(conversationHistory)
 		if err != nil {
@@ -79,9 +77,9 @@ func main() {
 
 		fmt.Fprint(W, "\nUser: ")
 		scanner.Scan()
-		userInput := scanner.Text()
+		userInput = scanner.Text()
 
-		// Append new history.
+		// Append prompt and response to history.
 		conversationHistory += fmt.Sprintf("%s\nUser: %s", llmResponseText, userInput)
 	}
 
