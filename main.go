@@ -12,16 +12,18 @@ import (
 	"github.com/joho/godotenv"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/spf13/pflag"
 )
 
 var (
-	DefaultQuery    string          = "Who was the first person to land on the Moon?"
-	MaxOutputTokens int64           = 250
-	W               io.Writer       = os.Stdout
-	ctx             context.Context = context.Background()
+	TextColourUser      = "\033[34m"
+	TextColourAssistant = "\033[32m"
+)
 
-	conversationHistory string = ""
+var (
+	MaxOutputTokens int64     = 250
+	W               io.Writer = os.Stdout
 )
 
 func main() {
@@ -45,42 +47,60 @@ func main() {
 	client := openai.NewClient(
 		option.WithAPIKey(apikey),
 	)
-	chatbot := newInteractiveChatbot(
-		ctx,
-		client,
-		*temp,
-		MaxOutputTokens,
-		openai.ChatModelGPT5_4Mini2026_03_17,
-	)
+
+	ctx := context.TODO()
+
+	chatbot := chatClient{
+		llmClient:            &client,
+		modelChoice:          openai.ChatModelGPT5_4Mini2026_03_17,
+		modelTemperature:     *temp,
+		modelMaxOutputTokens: MaxOutputTokens,
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	assistantMessage := "Assistant: How can I help you today?\n\nUser: "
-	fmt.Print(assistantMessage)
+	initialAssistantMessage := TextColourAssistant + "Assistant: How can I help you today?\n"
+	fmt.Print(initialAssistantMessage)
+
+	fmt.Print(TextColourUser + "User: ")
 	scanner.Scan()
 	userInput := scanner.Text()
 
-	conversationHistory += ChatbotHelpfulAssistantInitial + userInput
+	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
+	conversationHistory := []responses.ResponseInputItemUnionParam{
+		newSystemInstruction(SystemMessage),
+		newAssistantMessage(initialAssistantMessage),
+		newUserMessage(userInput),
+	}
 
 	// Chat loop:
 	for userInput != "exit" {
 		// Chat interaction:
-		response, err := chatbot(conversationHistory)
+		response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
 		if err != nil {
 			fmt.Fprintf(W, "generation failed: %v", err)
 			log.Println(conversationHistory)
 			os.Exit(1)
 		}
 
-		llmResponseText := fmt.Sprintf("\nAssistant: %s", response)
-		fmt.Fprintln(W, llmResponseText)
+		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
+		fmt.Fprint(W, llmResponseText)
 
-		fmt.Fprint(W, "\nUser: ")
+		fmt.Fprint(W, TextColourUser+"User: ")
 		scanner.Scan()
 		userInput = scanner.Text()
 
-		// Append prompt and response to history.
-		conversationHistory += fmt.Sprintf("%s\nUser: %s", llmResponseText, userInput)
+		// Append LLM output response to history.
+		conversationHistory = append(
+			conversationHistory,
+			outputAsInput(response.Output)...,
+		)
+
+		// Append user input prompt to history.
+		conversationHistory = append(
+			conversationHistory,
+			newUserMessage(userInput),
+		)
 	}
 
 	if err := scanner.Err(); err != nil {
