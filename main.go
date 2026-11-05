@@ -74,7 +74,11 @@ func main() {
 	}
 
 	// Chat loop:
-	for userInput != "exit" {
+	for {
+		if userInput != "exit" {
+			break
+		}
+
 		// Chat interaction:
 		response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
 		if err != nil {
