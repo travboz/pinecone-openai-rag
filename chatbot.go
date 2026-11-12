@@ -18,8 +18,8 @@ type chatClient struct {
 }
 
 var (
-	SystemMessage    string = "You are an AI assistant who always talks like a pirate."
-	AssistantMessage string = "Arrgh, how can I help you, matey?"
+	SystemMessage    string = "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster. You are to answer user queries below solely on the following documentation: %s"
+	AssistantMessage string = "How can I help you today?"
 )
 
 func newUserMessage(query string) responses.ResponseInputItemUnionParam {
@@ -28,6 +28,15 @@ func newUserMessage(query string) responses.ResponseInputItemUnionParam {
 
 func newAssistantMessage(outputFromLLM string) responses.ResponseInputItemUnionParam {
 	return responses.ResponseInputItemParamOfMessage(outputFromLLM, responses.EasyInputMessageRoleAssistant)
+}
+
+func newSystemInstructionWithKnowledge(instruction, knowledge string) responses.ResponseInputItemUnionParam {
+	augmentedInstruction := fmt.Sprintf(instruction, knowledge)
+
+	return responses.ResponseInputItemParamOfMessage(
+		augmentedInstruction,
+		responses.EasyInputMessageRoleDeveloper,
+	)
 }
 
 func newSystemInstruction(instruction string) responses.ResponseInputItemUnionParam {

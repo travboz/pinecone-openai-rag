@@ -22,7 +22,7 @@ var (
 )
 
 var (
-	MaxOutputTokens int64     = 250
+	MaxOutputTokens int64     = 500
 	W               io.Writer = os.Stdout
 )
 
@@ -57,6 +57,12 @@ func main() {
 		modelMaxOutputTokens: MaxOutputTokens,
 	}
 
+	flamehamsterFile, err := os.ReadFile("./ref/flamehamster.md")
+	if err != nil {
+		fmt.Fprintf(W, "flamehamster open file error: %\n", err)
+		os.Exit(1)
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 
 	initialAssistantMessage := TextColourAssistant + "Assistant: How can I help you today?\n"
@@ -68,16 +74,13 @@ func main() {
 
 	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
 	conversationHistory := []responses.ResponseInputItemUnionParam{
-		newSystemInstruction(SystemMessage),
+		newSystemInstructionWithKnowledge(SystemMessage, string(flamehamsterFile)),
 		newAssistantMessage(initialAssistantMessage),
 		newUserMessage(userInput),
 	}
 
 	// Chat loop:
-	for {
-		if userInput != "exit" {
-			break
-		}
+	for userInput != "exit" {
 
 		// Chat interaction:
 		response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
