@@ -21,8 +21,10 @@ type chatClient struct {
 }
 
 var (
-	SystemMessage    string = "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster. You are to answer user queries below solely on the following documentation: %s"
-	AssistantMessage string = "How can I help you today?"
+	// TODO: Fix this, needs new system message as cannot use this var.
+	SystemMessage string = "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster. You are to answer user queries below solely on the following documentation: %s"
+
+// AssistantMessage string = "How can I help you today?"
 )
 
 func newUserMessage(query string) responses.ResponseInputItemUnionParam {
@@ -69,8 +71,8 @@ func (c *chatClient) sendMessageWithHistory(ctx context.Context, history respons
 		Model:           c.modelChoice,
 		Temperature:     openai.Float(c.modelTemperature),
 		MaxOutputTokens: openai.Int(c.modelMaxOutputTokens),
-		Instructions:    openai.String(SystemMessage),
-		Store:           openai.Bool(false),
+		// Instructions:    openai.String(SystemMessage), // TODO: Fix this, needs new system message as cannot use var declared at top of file.
+		Store: openai.Bool(false),
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: history,
 		},

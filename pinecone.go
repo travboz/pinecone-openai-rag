@@ -50,3 +50,19 @@ func (c *EmbeddingClient) CreateDenseIndexWithIntegratedEmbedding(ctx context.Co
 
 	return nil
 }
+
+func (c *EmbeddingClient) FetchRelevantChunksFromVectorDB(ctx context.Context, idxConnection *pinecone.IndexConnection, userInput string, topk int32) (*pinecone.SearchRecordsResponse, error) {
+	res, err := idxConnection.SearchRecords(ctx, &pinecone.SearchRecordsRequest{
+		Query: pinecone.SearchRecordsQuery{
+			TopK: topk,
+			Inputs: &map[string]interface{}{
+				"text": userInput,
+			},
+		},
+	})
+	if err != nil {
+		fmt.Errorf("search for relevant records: %v", err)
+	}
+
+	return res, nil
+}

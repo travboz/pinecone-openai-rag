@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -166,4 +167,19 @@ func PrintResultingChunks(chunks []string) {
 		fmt.Printf(TextColourAssistant+"---- CHUNK [%d] ----\n", i+1)
 		fmt.Printf(TextColourUser+"Chunk: %s\n", chunk)
 	}
+}
+
+// Example usage:
+/*
+fileChunks, err := GenerateChunksFromFile("./ref/flamehamster.md")
+handleError(err)
+*/
+func GenerateChunksFromFile(filename string) ([]string, error) {
+	flamehamsterFile, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("%s open file error: %w ", filename, err)
+	}
+
+	fileChunks := SplitByH1(string(flamehamsterFile))
+	return fileChunks, nil
 }

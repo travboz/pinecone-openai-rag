@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -25,14 +25,12 @@ var (
 	ManualName     string = "flamehamster"
 
 	temp float64 = 0
+
+	RelevanceCountTopK int32 = 3
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
-
-	// temp := pflag.Float64("temp", 0.5, "set the model's temperature")
-	// pflag.Parse()
-
+	// Retrieve relevant API keys for services.
 	if err := godotenv.Load(); err != nil {
 		fmt.Fprintln(W, err)
 		os.Exit(1)
@@ -50,7 +48,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create ChatGPT and Pinecone clients.
 	ctx := context.TODO()
+
+	// client := openai.NewClient(
+	// 	option.WithAPIKey(apikey),
+	// )
+
+	// chatbot := chatClient{
+	// 	llmClient:            &client,
+	// 	modelChoice:          openai.ChatModelGPT5_4Mini2026_03_17,
+	// 	modelTemperature:     temp,
+	// 	modelMaxOutputTokens: MaxOutputTokens,
+	// }
 
 	pc, err := NewPineconeClient(pineconeApiKey)
 	if err != nil {
@@ -58,49 +68,105 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create a database instance in Pinecone we can use for semantic search.
 	err = pc.CreateDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
 	if err != nil {
 		switch err {
-		case ErrIndexAlreadyExists:
-			// index already exists, carry on
+		case ErrIndexAlreadyExists: // index already exists, carry on
 		default:
-			// some other actual error we haven't anticipated
 			fmt.Fprintf(W, "failed to create embedding: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
-	flamehamsterFile, err := os.ReadFile("./ref/flamehamster.md")
-	if err != nil {
-		fmt.Fprintf(W, "flamehamster open file error: %\n", err)
-		os.Exit(1)
-	}
-
-	chunkedFile := SplitByH1(string(flamehamsterFile))
-
+	// Create a connection to the flamehamster vector database.
 	idx, err := pc.client.DescribeIndex(ctx, IndexName)
 	handleError(err, "describe index")
 
 	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host, Namespace: "flamehamster"}
 
+	// Create the actual connection to the flamehamster database on Pinecone.
 	idxConnection, err := pc.client.Index(indexConnParams)
 	handleError(err, "index connection")
 	defer idxConnection.Close()
 
-	var records []*pinecone.IntegratedRecord
+	// ? Up to here: Start chatbot interaction.
 
-	for i, chunk := range chunkedFile {
-		newRecord := pinecone.IntegratedRecord{
-			"id":         fmt.Sprintf("chunk-{%d}", i),
-			"chunk_text": chunk,
-			"manual":     ManualName,
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
+	initialAssistantMessage := "How can I help you today?"
+
+	fmt.Printf(TextColourAssistant+"Assistant: %s\n", initialAssistantMessage)
+
+	fmt.Print(TextColourUser + "User: ")
+	scanner.Scan()
+	userInput := scanner.Text()
+
+	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
+	// conversationHistory := []responses.ResponseInputItemUnionParam{
+	// 	newSystemInstruction(systemInstruction),
+	// 	newAssistantMessage(initialAssistantMessage),
+	// }
+
+	// Chat loop:
+	for userInput != "exit" {
+
+		// ! Working here:
+		// Process relevant results from vector db:
+		res, err := pc.FetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
+		handleError(err, "retrieving relevant chunks from pinecone")
+
+		var relevantText string
+		for _, hit := range res.Result.Hits {
+			chunkText, ok := hit.Fields["chunk_text"]
+			if !ok {
+				fmt.Fprintf(W, "chunk text field doesn't exist: %v", hit)
+				os.Exit(1)
+			}
+
+			text, ok := chunkText.(string)
+			if !ok {
+				fmt.Fprintf(W, "chunk text field is not string: %v", text)
+				os.Exit(1)
+			}
+
+			relevantText += fmt.Sprintf("%s\n\n", text)
 		}
 
-		records = append(records, &newRecord)
+		// ? Pausing on chatbot interaction for a sec... just to test it's working.
+		// // Chat interaction:
+		// response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
+		// if err != nil {
+		// 	fmt.Fprintf(W, "generation failed: %v", err)
+		// 	log.Println(conversationHistory)
+		// 	os.Exit(1)
+		// }
+
+		// llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
+		// fmt.Fprint(W, llmResponseText)
+
+		fmt.Fprintf(W, TextColourAssistant+"Relevant text chunks:\n%s\n", relevantText)
+
+		fmt.Fprint(W, TextColourUser+"User: ")
+		scanner.Scan()
+		userInput = scanner.Text()
+
+		// // Append LLM output response to history.
+		// conversationHistory = append(
+		// 	conversationHistory,
+		// 	outputAsInput(response.Output)...,
+		// )
+
+		// // Append user input prompt to history.
+		// conversationHistory = append(
+		// 	conversationHistory,
+		// 	newUserMessage(userInput),
+		// )
 	}
 
-	err = idxConnection.UpsertRecords(ctx, records)
-	handleError(err, "upsert records")
-
-	fmt.Printf("Successfully upserted %d record(s)!\n", len(records))
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(W, "scanner error: %v", err)
+		os.Exit(1)
+	}
 }
