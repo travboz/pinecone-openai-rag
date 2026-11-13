@@ -68,7 +68,7 @@ func main() {
 	}
 
 	// Create a database instance in Pinecone we can use for semantic search.
-	err = pc.CreateDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
+	err = pc.createDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
 	if err != nil {
 		switch err {
 		case ErrIndexAlreadyExists: // index already exists, carry on
@@ -116,25 +116,11 @@ func main() {
 	for userInput != "exit" {
 
 		// Process relevant results from vector db:
-		res, err := pc.FetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
+		res, err := pc.fetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
 		handleError(err, "retrieving relevant chunks from pinecone")
 
-		var relevantText string
-		for _, hit := range res.Result.Hits {
-			chunkText, ok := hit.Fields["chunk_text"]
-			if !ok {
-				fmt.Fprintf(W, "chunk text field doesn't exist: %v", hit)
-				os.Exit(1)
-			}
-
-			text, ok := chunkText.(string)
-			if !ok {
-				fmt.Fprintf(W, "chunk text field is not string: %v", text)
-				os.Exit(1)
-			}
-
-			relevantText += fmt.Sprintf("%s\n\n", text)
-		}
+		relevantText, err := pc.convertRelevantHitsToText(res)
+		handleError(err, "converting relevant results to text")
 
 		augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantText, retrievalAugmentPrompt)
 

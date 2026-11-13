@@ -28,7 +28,7 @@ var (
 	ErrIndexAlreadyExists = errors.New("index already exists")
 )
 
-func (c *EmbeddingClient) CreateDenseIndexWithIntegratedEmbedding(ctx context.Context, indexName, model string) error {
+func (c *EmbeddingClient) createDenseIndexWithIntegratedEmbedding(ctx context.Context, indexName, model string) error {
 	_, err := c.client.CreateIndexForModel(ctx, &pinecone.CreateIndexForModelRequest{
 		Name:   indexName,
 		Cloud:  pinecone.CloudAWS,
@@ -51,7 +51,7 @@ func (c *EmbeddingClient) CreateDenseIndexWithIntegratedEmbedding(ctx context.Co
 	return nil
 }
 
-func (c *EmbeddingClient) FetchRelevantChunksFromVectorDB(ctx context.Context, idxConnection *pinecone.IndexConnection, userInput string, topk int32) (*pinecone.SearchRecordsResponse, error) {
+func (c *EmbeddingClient) fetchRelevantChunksFromVectorDB(ctx context.Context, idxConnection *pinecone.IndexConnection, userInput string, topk int32) (*pinecone.SearchRecordsResponse, error) {
 	res, err := idxConnection.SearchRecords(ctx, &pinecone.SearchRecordsRequest{
 		Query: pinecone.SearchRecordsQuery{
 			TopK: topk,
@@ -61,8 +61,34 @@ func (c *EmbeddingClient) FetchRelevantChunksFromVectorDB(ctx context.Context, i
 		},
 	})
 	if err != nil {
-		fmt.Errorf("search for relevant records: %v", err)
+		return nil, fmt.Errorf("search for relevant records: %v", err)
 	}
 
+	// // Convert relevant chunks to giant string for prompt injection.
+	// relevantText, err := c.convertRelevantHitsToText(res)
+	// if err != nil {
+	// 	return "", fmt.Errorf("convert relevant hits to text: %w", err)
+	// }
+
 	return res, nil
+}
+
+// Convert relevant chunks to giant string for prompt injection.
+func (c *EmbeddingClient) convertRelevantHitsToText(records *pinecone.SearchRecordsResponse) (string, error) {
+	var relevantText string
+	for _, hit := range records.Result.Hits {
+		chunkText, ok := hit.Fields["chunk_text"]
+		if !ok {
+			return "", fmt.Errorf("chunk text field doesn't exist: %v", hit)
+		}
+
+		text, ok := chunkText.(string)
+		if !ok {
+			return "", fmt.Errorf("chunk text field is not string: %v", text)
+		}
+
+		relevantText += fmt.Sprintf("%s\n\n", text)
+	}
+
+	return relevantText, nil
 }
