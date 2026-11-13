@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"github.com/joho/godotenv"
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/pinecone-io/go-pinecone/v7/pinecone"
 )
 
@@ -51,16 +54,12 @@ func main() {
 	// Create ChatGPT and Pinecone clients.
 	ctx := context.TODO()
 
-	// client := openai.NewClient(
-	// 	option.WithAPIKey(apikey),
-	// )
-
-	// chatbot := chatClient{
-	// 	llmClient:            &client,
-	// 	modelChoice:          openai.ChatModelGPT5_4Mini2026_03_17,
-	// 	modelTemperature:     temp,
-	// 	modelMaxOutputTokens: MaxOutputTokens,
-	// }
+	chatClient := NewChatClient(
+		apikey,
+		openai.ChatModelGPT5_4Mini2026_03_17,
+		temp,
+		MaxOutputTokens,
+	)
 
 	pc, err := NewPineconeClient(pineconeApiKey)
 	if err != nil {
@@ -94,25 +93,28 @@ func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
+	systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
 	initialAssistantMessage := "How can I help you today?"
+	// Order is {relevant_docs} then {original_user_input}.
+	retrievalAugmentPrompt := "Here are excerpts from the official Flamehamster web browser documentation: %s. Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s"
 
+	// Printing How can I help you:
 	fmt.Printf(TextColourAssistant+"Assistant: %s\n", initialAssistantMessage)
 
+	// Getting first user input:
 	fmt.Print(TextColourUser + "User: ")
 	scanner.Scan()
 	userInput := scanner.Text()
 
-	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
-	// conversationHistory := []responses.ResponseInputItemUnionParam{
-	// 	newSystemInstruction(systemInstruction),
-	// 	newAssistantMessage(initialAssistantMessage),
-	// }
+	// Creating initial history:
+	conversationHistory := []responses.ResponseInputItemUnionParam{
+		newSystemInstruction(systemInstruction),
+		newAssistantMessage(initialAssistantMessage),
+	}
 
-	// Chat loop:
+	// * Chat loop:
 	for userInput != "exit" {
 
-		// ! Working here:
 		// Process relevant results from vector db:
 		res, err := pc.FetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
 		handleError(err, "retrieving relevant chunks from pinecone")
@@ -134,35 +136,32 @@ func main() {
 			relevantText += fmt.Sprintf("%s\n\n", text)
 		}
 
-		// ? Pausing on chatbot interaction for a sec... just to test it's working.
-		// // Chat interaction:
-		// response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
-		// if err != nil {
-		// 	fmt.Fprintf(W, "generation failed: %v", err)
-		// 	log.Println(conversationHistory)
-		// 	os.Exit(1)
-		// }
+		augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantText, retrievalAugmentPrompt)
 
-		// llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
-		// fmt.Fprint(W, llmResponseText)
+		// Append augmented user input prompt to history.
+		conversationHistory = append(conversationHistory, newUserMessage(augmentedPrompt))
 
-		fmt.Fprintf(W, TextColourAssistant+"Relevant text chunks:\n%s\n", relevantText)
+		// * Chat interaction:
+		// Augment user input prompt with retrieved, relevant text chunks:
+		response, err := chatClient.sendMessageWithHistory(ctx, conversationHistory)
+		if err != nil {
+			fmt.Fprintf(W, "generation failed: %v", err)
+			log.Println(conversationHistory)
+			os.Exit(1)
+		}
+
+		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
+		fmt.Fprint(W, llmResponseText)
+
+		// Append LLM output response to history.
+		conversationHistory = append(
+			conversationHistory,
+			outputAsInput(response.Output)...,
+		)
 
 		fmt.Fprint(W, TextColourUser+"User: ")
 		scanner.Scan()
 		userInput = scanner.Text()
-
-		// // Append LLM output response to history.
-		// conversationHistory = append(
-		// 	conversationHistory,
-		// 	outputAsInput(response.Output)...,
-		// )
-
-		// // Append user input prompt to history.
-		// conversationHistory = append(
-		// 	conversationHistory,
-		// 	newUserMessage(userInput),
-		// )
 	}
 
 	if err := scanner.Err(); err != nil {
