@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -90,3 +93,74 @@ func outputAsInput(output []responses.ResponseOutputItemUnion) []responses.Respo
 	}
 	return input
 }
+
+// TODO: Make this into an actual, workable function. Currently: PLACEHOLDER for reference.
+func HandleChatInteraction(ctx context.Context, chatbot chatClient, flamehamsterFile []byte) {
+	scanner := bufio.NewScanner(os.Stdin)
+
+	initialAssistantMessage := TextColourAssistant + "Assistant: How can I help you today?\n"
+	fmt.Print(initialAssistantMessage)
+
+	fmt.Print(TextColourUser + "User: ")
+	scanner.Scan()
+	userInput := scanner.Text()
+
+	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
+	conversationHistory := []responses.ResponseInputItemUnionParam{
+		newSystemInstructionWithKnowledge(SystemMessage, string(flamehamsterFile)),
+		newAssistantMessage(initialAssistantMessage),
+		newUserMessage(userInput),
+	}
+
+	// Chat loop:
+	for userInput != "exit" {
+
+		// Chat interaction:
+		response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
+		if err != nil {
+			fmt.Fprintf(W, "generation failed: %v", err)
+			log.Println(conversationHistory)
+			os.Exit(1)
+		}
+
+		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
+		fmt.Fprint(W, llmResponseText)
+
+		fmt.Fprint(W, TextColourUser+"User: ")
+		scanner.Scan()
+		userInput = scanner.Text()
+
+		// Append LLM output response to history.
+		conversationHistory = append(
+			conversationHistory,
+			outputAsInput(response.Output)...,
+		)
+
+		// Append user input prompt to history.
+		conversationHistory = append(
+			conversationHistory,
+			newUserMessage(userInput),
+		)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(W, "scanner error: %v", err)
+		os.Exit(1)
+	}
+}
+
+/* OpenAI chatbot creation reference:
+# Retrieve API key for OpenAI API.
+Chatbot creation:
+client := openai.NewClient(
+	option.WithAPIKey(apikey),
+)
+
+# Construct a client with basic config.
+chatbot := chatClient{
+	llmClient:            &client,
+	modelChoice:          openai.ChatModelGPT5_4Mini2026_03_17,
+	modelTemperature:     temp,
+	modelMaxOutputTokens: MaxOutputTokens,
+}
+*/

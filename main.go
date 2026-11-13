@@ -1,19 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 
 	"github.com/joho/godotenv"
-	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
-	"github.com/spf13/pflag"
+	"github.com/pinecone-io/go-pinecone/v7/pinecone"
 )
 
 var (
@@ -24,13 +19,19 @@ var (
 var (
 	MaxOutputTokens int64     = 500
 	W               io.Writer = os.Stdout
+
+	EmbeddingModel string = "llama-text-embed-v2"
+	IndexName      string = "gross-app"
+	ManualName     string = "flamehamster"
+
+	temp float64 = 0
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
-	temp := pflag.Float64("temp", 0.5, "set the model's temperature")
-	pflag.Parse()
+	// temp := pflag.Float64("temp", 0.5, "set the model's temperature")
+	// pflag.Parse()
 
 	if err := godotenv.Load(); err != nil {
 		fmt.Fprintln(W, err)
@@ -43,18 +44,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Chatbot creation:
-	client := openai.NewClient(
-		option.WithAPIKey(apikey),
-	)
+	pineconeApiKey := os.Getenv("PINECONE_API_KEY")
+	if pineconeApiKey == "" {
+		fmt.Fprintln(W, "pinecone api key is not set")
+		os.Exit(1)
+	}
 
 	ctx := context.TODO()
 
-	chatbot := chatClient{
-		llmClient:            &client,
-		modelChoice:          openai.ChatModelGPT5_4Mini2026_03_17,
-		modelTemperature:     *temp,
-		modelMaxOutputTokens: MaxOutputTokens,
+	pc, err := NewPineconeClient(pineconeApiKey)
+	if err != nil {
+		fmt.Fprintf(W, "failed to create pinecone client: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = pc.CreateDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
+	if err != nil {
+		switch err {
+		case ErrIndexAlreadyExists:
+			// index already exists, carry on
+		default:
+			// some other actual error we haven't anticipated
+			fmt.Fprintf(W, "failed to create embedding: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	flamehamsterFile, err := os.ReadFile("./ref/flamehamster.md")
@@ -63,55 +76,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+	chunkedFile := SplitByH1(string(flamehamsterFile))
 
-	initialAssistantMessage := TextColourAssistant + "Assistant: How can I help you today?\n"
-	fmt.Print(initialAssistantMessage)
+	idx, err := pc.client.DescribeIndex(ctx, IndexName)
+	handleError(err, "describe index")
 
-	fmt.Print(TextColourUser + "User: ")
-	scanner.Scan()
-	userInput := scanner.Text()
+	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host, Namespace: "flamehamster"}
 
-	// conversationHistory += ChatbotHelpfulAssistantInitial + userInput
-	conversationHistory := []responses.ResponseInputItemUnionParam{
-		newSystemInstructionWithKnowledge(SystemMessage, string(flamehamsterFile)),
-		newAssistantMessage(initialAssistantMessage),
-		newUserMessage(userInput),
-	}
+	idxConnection, err := pc.client.Index(indexConnParams)
+	handleError(err, "index connection")
+	defer idxConnection.Close()
 
-	// Chat loop:
-	for userInput != "exit" {
+	var records []*pinecone.IntegratedRecord
 
-		// Chat interaction:
-		response, err := chatbot.sendMessageWithHistory(ctx, conversationHistory)
-		if err != nil {
-			fmt.Fprintf(W, "generation failed: %v", err)
-			log.Println(conversationHistory)
-			os.Exit(1)
+	for i, chunk := range chunkedFile {
+		newRecord := pinecone.IntegratedRecord{
+			"id":         fmt.Sprintf("chunk-{%d}", i),
+			"chunk_text": chunk,
+			"manual":     ManualName,
 		}
 
-		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
-		fmt.Fprint(W, llmResponseText)
-
-		fmt.Fprint(W, TextColourUser+"User: ")
-		scanner.Scan()
-		userInput = scanner.Text()
-
-		// Append LLM output response to history.
-		conversationHistory = append(
-			conversationHistory,
-			outputAsInput(response.Output)...,
-		)
-
-		// Append user input prompt to history.
-		conversationHistory = append(
-			conversationHistory,
-			newUserMessage(userInput),
-		)
+		records = append(records, &newRecord)
 	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(W, "scanner error: %v", err)
-		os.Exit(1)
-	}
+	err = idxConnection.UpsertRecords(ctx, records)
+	handleError(err, "upsert records")
+
+	fmt.Printf("Successfully upserted %d record(s)!\n", len(records))
 }
