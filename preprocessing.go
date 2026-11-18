@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -182,4 +183,32 @@ func GenerateChunksFromFile(filename string) ([]string, error) {
 
 	fileChunks := SplitByH1(string(flamehamsterFile))
 	return fileChunks, nil
+}
+
+func ChunksFromDirectory(dir string) (map[string][]string, error) {
+	// Create store to map filename to chunks.
+	var chunkMatrix = make(map[string][]string)
+
+	// Grab files in directory.
+	filesList, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read directory: %w", err)
+	}
+
+	for _, entry := range filesList {
+		if entry.IsDir() {
+			continue
+		}
+
+		entryPath := filepath.Join(dir, entry.Name())
+
+		chunks, err := GenerateChunksFromFile(entryPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not chunk file '%s': %w", entryPath, err)
+		}
+
+		chunkMatrix[entryPath] = chunks
+	}
+
+	return chunkMatrix, nil
 }

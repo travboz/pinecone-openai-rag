@@ -1,17 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 
 	"github.com/joho/godotenv"
-	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
-	"github.com/pinecone-io/go-pinecone/v7/pinecone"
 )
 
 var (
@@ -51,6 +45,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// ? Todo: Upsert all files into Pinecone
+	// Create chunks for each file.
+	chunksMap, err := ChunksFromDirectory("./data")
+	handleError(err, "unable to chunk files in directory")
+
+	// Iterate over chunks and upsert into Pinecone.
+	err = pc.upsertChunkMapToIndex(chunksMap)
+	handleError(err, "unable to upsert chunks to index")
+
+	/* // ! Delete this comment opener to continue
 	// Create ChatGPT and Pinecone clients.
 	ctx := context.TODO()
 
@@ -154,4 +158,5 @@ func main() {
 		fmt.Fprintf(W, "scanner error: %v", err)
 		os.Exit(1)
 	}
+	*/
 }

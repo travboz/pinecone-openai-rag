@@ -92,3 +92,14 @@ func (c *EmbeddingClient) convertRelevantHitsToText(records *pinecone.SearchReco
 
 	return relevantText, nil
 }
+
+func (c *EmbeddingClient) CreateNewNamespace(ctx context.Context, idc *pinecone.IndexConnection, name string) (string, error) {
+	ns, err := idc.CreateNamespace(ctx, &pinecone.CreateNamespaceParams{
+		Name: name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("cannot create new namespace '%s': %w", name, err)
+	}
+
+	return ns.Name, nil
+}
