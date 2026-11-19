@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -64,7 +65,7 @@ func (c *EmbeddingClient) upsertChunksToIndex(ctx context.Context, idxConnection
 
 	for i, chunk := range chunks {
 		newRecord := pinecone.IntegratedRecord{
-			"id":         fmt.Sprintf("chunk-{%d}", i),
+			"id":         fmt.Sprintf("%s-chunk-%d", manualName, i),
 			"chunk_text": chunk,
 			"manual":     manualName,
 		}
@@ -77,18 +78,18 @@ func (c *EmbeddingClient) upsertChunksToIndex(ctx context.Context, idxConnection
 		return fmt.Errorf("upsert records: %w", err)
 	}
 
-	fmt.Printf("Successfully upserted %d record(s)!\n", len(records))
+	slog.Info("upsert successful", slog.String("manual", manualName), slog.Int("count", len(chunks)))
 
 	return nil
 }
 
 func (c *EmbeddingClient) upsertChunkMapToIndex(ctx context.Context, idxConnection *pinecone.IndexConnection, cMap map[string][]string) error {
 	for manualName, chunks := range cMap {
-		if err := c.upsertChunksToIndex(ctx, idxConnection, strings.TrimSuffix(manualName, ".md"), chunks); err != nil {
+		withoutExt := strings.TrimSuffix(manualName, ".md")
+
+		if err := c.upsertChunksToIndex(ctx, idxConnection, withoutExt, chunks); err != nil {
 			return fmt.Errorf("upsertChunkMapToIndex loop: %w", err)
 		}
-		fmt.Printf("Successfully upserted chunk(s) to %s.\n", manualName)
-
 	}
 	return nil
 }

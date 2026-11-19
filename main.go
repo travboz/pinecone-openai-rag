@@ -9,6 +9,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/pinecone-io/go-pinecone/v7/pinecone"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -27,9 +28,14 @@ var (
 	temp float64 = 0
 
 	RelevanceCountTopK int32 = 3
+
+	CreateRecords bool
 )
 
 func main() {
+	pflag.BoolVar(&CreateRecords, "build", false, "builds the index, namespace, and upserts documents for project")
+	pflag.Parse()
+
 	// Retrieve relevant API keys for services.
 	if err := godotenv.Load(); err != nil {
 		fmt.Fprintln(W, err)
@@ -67,18 +73,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create a database instance in Pinecone we can use for semantic search.
-	err = pc.createDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
-	if err != nil {
-		switch err {
-		case ErrIndexAlreadyExists: // index already exists, carry on
-			slog.Info("no operation", slog.String("reason", err.Error()))
-		default:
-			fmt.Fprintf(W, "failed to create embedding: %v\n", err)
-			os.Exit(1)
+	if CreateRecords {
+		// Create a database instance in Pinecone we can use for semantic search.
+		err = pc.createDenseIndexWithIntegratedEmbedding(ctx, IndexName, EmbeddingModel)
+		if err != nil {
+			switch err {
+			case ErrIndexAlreadyExists: // index already exists, carry on
+				slog.Info("no operation", slog.String("reason", err.Error()))
+			default:
+				fmt.Fprintf(W, "failed to create embedding: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
-
 	// Create a connection to the flamehamster vector database.
 	idx, err := pc.client.DescribeIndex(ctx, IndexName)
 	handleError(err, "describe index")
@@ -102,20 +109,18 @@ func main() {
 		}
 	}
 
-	// Upsert all document chunks into Pinecone using the new namespace.
-	// Create chunks for each file.
-	chunksMap, err := ChunksFromDirectory("./data")
-	handleError(err, "unable to chunk files in directory")
-
 	nsIdxConnection := idxConnection.WithNamespace(ns)
 
-	// Iterate over chunks and upsert into Pinecone.
-	err = pc.upsertChunkMapToIndex(ctx, nsIdxConnection, chunksMap)
-	handleError(err, "unable to upsert chunks to index")
+	if CreateRecords {
+		// Upsert all document chunks into Pinecone using the new namespace.
+		// Create chunks for each file.
+		chunksMap, err := ChunksFromDirectory("./data")
+		handleError(err, "unable to chunk files in directory")
 
-	os.Exit(0)
-
-	// ! Fails and only uploads 44 records.
+		// Iterate over chunks and upsert into Pinecone.
+		err = pc.upsertChunkMapToIndex(ctx, nsIdxConnection, chunksMap)
+		handleError(err, "unable to upsert chunks to index")
+	}
 
 	// ? Up to here: Start chatbot interaction.
 	// scanner := bufio.NewScanner(os.Stdin)
