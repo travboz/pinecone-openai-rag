@@ -207,7 +207,7 @@ func ChunksFromDirectory(dir string) (map[string][]string, error) {
 			return nil, fmt.Errorf("could not chunk file '%s': %w", entryPath, err)
 		}
 
-		chunkMatrix[entryPath] = chunks
+		chunkMatrix[entry.Name()] = chunks
 	}
 
 	return chunkMatrix, nil

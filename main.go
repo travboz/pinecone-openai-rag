@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/pinecone-io/go-pinecone/v7/pinecone"
 )
 
 var (
@@ -45,25 +48,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ? Todo: Upsert all files into Pinecone
-	// Create chunks for each file.
-	chunksMap, err := ChunksFromDirectory("./data")
-	handleError(err, "unable to chunk files in directory")
+	// // ? Todo: Upsert all files into Pinecone
 
-	// Iterate over chunks and upsert into Pinecone.
-	err = pc.upsertChunkMapToIndex(chunksMap)
-	handleError(err, "unable to upsert chunks to index")
-
-	/* // ! Delete this comment opener to continue
 	// Create ChatGPT and Pinecone clients.
 	ctx := context.TODO()
 
-	chatClient := NewChatClient(
-		apikey,
-		openai.ChatModelGPT5_4Mini2026_03_17,
-		temp,
-		MaxOutputTokens,
-	)
+	// Chat client creation.
+	// chatClient := NewChatClient(
+	// 	apikey,
+	// 	openai.ChatModelGPT5_4Mini2026_03_17,
+	// 	temp,
+	// 	MaxOutputTokens,
+	// )
 
 	pc, err := NewPineconeClient(pineconeApiKey)
 	if err != nil {
@@ -76,6 +72,7 @@ func main() {
 	if err != nil {
 		switch err {
 		case ErrIndexAlreadyExists: // index already exists, carry on
+			slog.Info("no operation", slog.String("reason", err.Error()))
 		default:
 			fmt.Fprintf(W, "failed to create embedding: %v\n", err)
 			os.Exit(1)
@@ -86,77 +83,102 @@ func main() {
 	idx, err := pc.client.DescribeIndex(ctx, IndexName)
 	handleError(err, "describe index")
 
-	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host, Namespace: "flamehamster"}
+	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host}
 
 	// Create the actual connection to the flamehamster database on Pinecone.
 	idxConnection, err := pc.client.Index(indexConnParams)
 	handleError(err, "index connection")
 	defer idxConnection.Close()
 
-	// ? Up to here: Start chatbot interaction.
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
-	initialAssistantMessage := "How can I help you today?"
-	// Order is {relevant_docs} then {original_user_input}.
-	retrievalAugmentPrompt := "Here are excerpts from the official Flamehamster web browser documentation: %s. Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s"
-
-	// Printing How can I help you:
-	fmt.Printf(TextColourAssistant+"Assistant: %s\n", initialAssistantMessage)
-
-	// Getting first user input:
-	fmt.Print(TextColourUser + "User: ")
-	scanner.Scan()
-	userInput := scanner.Text()
-
-	// Creating initial history:
-	conversationHistory := []responses.ResponseInputItemUnionParam{
-		newSystemInstruction(systemInstruction),
-		newAssistantMessage(initialAssistantMessage),
-	}
-
-	// * Chat loop:
-	for userInput != "exit" {
-
-		// Process relevant results from vector db:
-		res, err := pc.fetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
-		handleError(err, "retrieving relevant chunks from pinecone")
-
-		relevantText, err := pc.convertRelevantHitsToText(res)
-		handleError(err, "converting relevant results to text")
-
-		augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantText, retrievalAugmentPrompt)
-
-		// Append augmented user input prompt to history.
-		conversationHistory = append(conversationHistory, newUserMessage(augmentedPrompt))
-
-		// * Chat interaction:
-		// Augment user input prompt with retrieved, relevant text chunks:
-		response, err := chatClient.sendMessageWithHistory(ctx, conversationHistory)
-		if err != nil {
-			fmt.Fprintf(W, "generation failed: %v", err)
-			log.Println(conversationHistory)
+	// Creating a new namespace to insert every document's chunks.
+	ns, err := pc.createNewNamespace(ctx, idxConnection, GrossAppPineconeNS)
+	if err != nil {
+		switch err {
+		case ErrNamespaceAlreadyExists: // index already exists, carry on
+			slog.Info("no operation", slog.String("reason", err.Error()))
+		default:
+			fmt.Fprintf(W, "failed to create namespace: %v\n", err)
 			os.Exit(1)
 		}
-
-		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
-		fmt.Fprint(W, llmResponseText)
-
-		// Append LLM output response to history.
-		conversationHistory = append(
-			conversationHistory,
-			outputAsInput(response.Output)...,
-		)
-
-		fmt.Fprint(W, TextColourUser+"User: ")
-		scanner.Scan()
-		userInput = scanner.Text()
 	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(W, "scanner error: %v", err)
-		os.Exit(1)
-	}
-	*/
+	// Upsert all document chunks into Pinecone using the new namespace.
+	// Create chunks for each file.
+	chunksMap, err := ChunksFromDirectory("./data")
+	handleError(err, "unable to chunk files in directory")
+
+	nsIdxConnection := idxConnection.WithNamespace(ns)
+
+	// Iterate over chunks and upsert into Pinecone.
+	err = pc.upsertChunkMapToIndex(ctx, nsIdxConnection, chunksMap)
+	handleError(err, "unable to upsert chunks to index")
+
+	os.Exit(0)
+
+	// ! Fails and only uploads 44 records.
+
+	// ? Up to here: Start chatbot interaction.
+	// scanner := bufio.NewScanner(os.Stdin)
+
+	// systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
+	// initialAssistantMessage := "How can I help you today?"
+	// // Order is {relevant_docs} then {original_user_input}.
+	// retrievalAugmentPrompt := "Here are excerpts from the official Flamehamster web browser documentation: %s. Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s"
+
+	// // Printing How can I help you:
+	// fmt.Printf(TextColourAssistant+"Assistant: %s\n", initialAssistantMessage)
+
+	// // Getting first user input:
+	// fmt.Print(TextColourUser + "User: ")
+	// scanner.Scan()
+	// userInput := scanner.Text()
+
+	// // Creating initial history:
+	// conversationHistory := []responses.ResponseInputItemUnionParam{
+	// 	newSystemInstruction(systemInstruction),
+	// 	newAssistantMessage(initialAssistantMessage),
+	// }
+
+	// // * Chat loop:
+	// for userInput != "exit" {
+
+	// 	// Process relevant results from vector db:
+	// 	res, err := pc.fetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
+	// 	handleError(err, "retrieving relevant chunks from pinecone")
+
+	// 	relevantText, err := pc.convertRelevantHitsToText(res)
+	// 	handleError(err, "converting relevant results to text")
+
+	// 	augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantText, retrievalAugmentPrompt)
+
+	// 	// Append augmented user input prompt to history.
+	// 	conversationHistory = append(conversationHistory, newUserMessage(augmentedPrompt))
+
+	// 	// * Chat interaction:
+	// 	// Augment user input prompt with retrieved, relevant text chunks:
+	// 	response, err := chatClient.sendMessageWithHistory(ctx, conversationHistory)
+	// 	if err != nil {
+	// 		fmt.Fprintf(W, "generation failed: %v", err)
+	// 		log.Println(conversationHistory)
+	// 		os.Exit(1)
+	// 	}
+
+	// 	llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
+	// 	fmt.Fprint(W, llmResponseText)
+
+	// 	// Append LLM output response to history.
+	// 	conversationHistory = append(
+	// 		conversationHistory,
+	// 		outputAsInput(response.Output)...,
+	// 	)
+
+	// 	fmt.Fprint(W, TextColourUser+"User: ")
+	// 	scanner.Scan()
+	// 	userInput = scanner.Text()
+	// }
+
+	// if err := scanner.Err(); err != nil {
+	// 	fmt.Fprintf(W, "scanner error: %v", err)
+	// 	os.Exit(1)
+	// }
 }

@@ -5,8 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/pinecone-io/go-pinecone/v7/pinecone"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const (
+	GrossAppPineconeNS string = "all-gross"
 )
 
 type EmbeddingClient struct {
@@ -25,7 +32,8 @@ func NewPineconeClient(apikey string) (*EmbeddingClient, error) {
 }
 
 var (
-	ErrIndexAlreadyExists = errors.New("index already exists")
+	ErrIndexAlreadyExists     = errors.New("index already exists")
+	ErrNamespaceAlreadyExists = errors.New("namespace already exists")
 )
 
 func (c *EmbeddingClient) createDenseIndexWithIntegratedEmbedding(ctx context.Context, indexName, model string) error {
@@ -48,6 +56,40 @@ func (c *EmbeddingClient) createDenseIndexWithIntegratedEmbedding(ctx context.Co
 		}
 	}
 
+	return nil
+}
+
+func (c *EmbeddingClient) upsertChunksToIndex(ctx context.Context, idxConnection *pinecone.IndexConnection, manualName string, chunks []string) error {
+	var records []*pinecone.IntegratedRecord
+
+	for i, chunk := range chunks {
+		newRecord := pinecone.IntegratedRecord{
+			"id":         fmt.Sprintf("chunk-{%d}", i),
+			"chunk_text": chunk,
+			"manual":     manualName,
+		}
+
+		records = append(records, &newRecord)
+	}
+
+	err := idxConnection.UpsertRecords(ctx, records)
+	if err != nil {
+		return fmt.Errorf("upsert records: %w", err)
+	}
+
+	fmt.Printf("Successfully upserted %d record(s)!\n", len(records))
+
+	return nil
+}
+
+func (c *EmbeddingClient) upsertChunkMapToIndex(ctx context.Context, idxConnection *pinecone.IndexConnection, cMap map[string][]string) error {
+	for manualName, chunks := range cMap {
+		if err := c.upsertChunksToIndex(ctx, idxConnection, strings.TrimSuffix(manualName, ".md"), chunks); err != nil {
+			return fmt.Errorf("upsertChunkMapToIndex loop: %w", err)
+		}
+		fmt.Printf("Successfully upserted chunk(s) to %s.\n", manualName)
+
+	}
 	return nil
 }
 
@@ -93,12 +135,22 @@ func (c *EmbeddingClient) convertRelevantHitsToText(records *pinecone.SearchReco
 	return relevantText, nil
 }
 
-func (c *EmbeddingClient) CreateNewNamespace(ctx context.Context, idc *pinecone.IndexConnection, name string) (string, error) {
+func (c *EmbeddingClient) createNewNamespace(ctx context.Context, idc *pinecone.IndexConnection, name string) (string, error) {
 	ns, err := idc.CreateNamespace(ctx, &pinecone.CreateNamespaceParams{
 		Name: name,
 	})
 	if err != nil {
-		return "", fmt.Errorf("cannot create new namespace '%s': %w", name, err)
+		st, ok := status.FromError(err)
+		if !ok {
+			return "", fmt.Errorf("standard go error: %w", err)
+		}
+
+		switch st.Code() {
+		case codes.AlreadyExists:
+			return "", ErrNamespaceAlreadyExists
+		default:
+			return "", fmt.Errorf("gRPC error: [%s]: %w", st.Message(), st.Err())
+		}
 	}
 
 	return ns.Name, nil
