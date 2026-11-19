@@ -38,6 +38,35 @@ func NewChatClient(
 	}
 }
 
+type conversationHistory []responses.ResponseInputItemUnionParam
+
+func (h *conversationHistory) AddSystemInstruction(inst string) {
+	ch := append(
+		*h,
+		newSystemInstruction(inst),
+	)
+
+	h = &ch
+}
+
+func (h *conversationHistory) AddAssistantMessage(msg string) {
+	ch := append(
+		*h,
+		newAssistantMessage(msg),
+	)
+
+	h = &ch
+}
+
+func (h *conversationHistory) AddUserMessage(msg string) {
+	ch := append(
+		*h,
+		newUserMessage(msg),
+	)
+
+	h = &ch
+}
+
 func augmentUserInputWithRelevantKnowledge(userInput, knowledge, augmentPrompt string) string {
 	return fmt.Sprintf(augmentPrompt, knowledge, userInput)
 }

@@ -136,6 +136,24 @@ func (c *EmbeddingClient) convertRelevantHitsToText(records *pinecone.SearchReco
 	return relevantText, nil
 }
 
+func (c *EmbeddingClient) FetchRelevantKnowledge(
+	ctx context.Context,
+	idxConnection *pinecone.IndexConnection,
+	userInput string,
+) (string, error) {
+	res, err := c.fetchRelevantChunksFromVectorDB(ctx, idxConnection, userInput, RelevanceCountTopK)
+	if err != nil {
+		return "", fmt.Errorf("retrieving relevant chunks from pinecone: %w", err)
+	}
+
+	relevantText, err := c.convertRelevantHitsToText(res)
+	if err != nil {
+		return "", fmt.Errorf("converting relevant results to text: %w", err)
+	}
+
+	return relevantText, nil
+}
+
 func (c *EmbeddingClient) createNewNamespace(ctx context.Context, idc *pinecone.IndexConnection, name string) (string, error) {
 	ns, err := idc.CreateNamespace(ctx, &pinecone.CreateNamespaceParams{
 		Name: name,

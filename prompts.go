@@ -1,15 +1,42 @@
 package main
 
+// func SystemInstructionPrompt() string {
+
+// 	systemInstruction := `You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS.
+// 	The products are:
+// 		* Flamehamster, a web browser.
+// 		* Rumblechirp, an email client.
+// 		* GuineaPigment, a drawing tool for creating/editing SVGs
+// 		* EMRgency, an electronic medical record system
+// 		* Verbiage++, a content management system.`
+
+// 	return systemInstruction
+// }
+// func InitialAssistantMessagePrompt() string {
+// 	initialAssistantMessage := `How can I help you today?`
+// 	return initialAssistantMessage
+// }
+
+// func RetrievalAugmentPrompt() string {
+
+// 	// Order is {relevant_docs} then {original_user_input}.
+// 	retrievalAugmentPrompt := `Here are excerpts from the official GROSS product documentation: %s.
+// 	Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s`
+
+// 	return retrievalAugmentPrompt
+// }
+
 var (
-	ChatbotHelpfulAssistantInitial = "Assistant: How can I help you today?\n\nUser: "
+	SystemInstructions string = `You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS.
+	The products are:
+		* Flamehamster, a web browser.
+		* Rumblechirp, an email client.
+		* GuineaPigment, a drawing tool for creating/editing SVGs
+		* EMRgency, an electronic medical record system
+		* Verbiage++, a content management system.`
 
-	ChatbotInputPrompt = `I'm a helpful chatbot! Ask me anything:`
+	InitialAssistantMessage string = `How can I help you today?`
 
-	ChatbotPiratePrompt         = `Ahoy! Got questions? Spit 'em out, ye scallywag!`
-	ChatbotSystemPirateTemplate = `Respond to the following like a pirate: %s`
-
-	ChatbotSpanishPrompt                         = `Enter a phrase, and I'll translate it into Spanish!`
-	ChatbotSystemSpanishTranslateTemplate        = `Translate the following phrase into Spanish: %s`
-	ChatbotSystemSpanishTranslateFocusedTemplate = `Translate the following phrase into Spanish: %s. 
-	Answer with just the translation and no other introductory text.`
+	RetrievalAugmentPrompt string = `Here are excerpts from the official GROSS product documentation: %s. 
+	Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s`
 )
