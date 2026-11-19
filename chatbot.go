@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -41,30 +42,23 @@ func NewChatClient(
 type conversationHistory []responses.ResponseInputItemUnionParam
 
 func (h *conversationHistory) AddSystemInstruction(inst string) {
-	ch := append(
-		*h,
-		newSystemInstruction(inst),
-	)
-
-	h = &ch
+	*h = append(*h, newSystemInstruction(inst))
 }
 
 func (h *conversationHistory) AddAssistantMessage(msg string) {
-	ch := append(
-		*h,
-		newAssistantMessage(msg),
-	)
-
-	h = &ch
+	*h = append(*h, newAssistantMessage(msg))
 }
 
 func (h *conversationHistory) AddUserMessage(msg string) {
-	ch := append(
-		*h,
-		newUserMessage(msg),
-	)
+	*h = append(*h, newUserMessage(msg))
+}
 
-	h = &ch
+func (h *conversationHistory) AddLLMResponse(res *responses.Response) {
+	// Append LLM output response to history.
+	*h = append(
+		*h,
+		outputAsInput(res.Output)...,
+	)
 }
 
 func augmentUserInputWithRelevantKnowledge(userInput, knowledge, augmentPrompt string) string {
@@ -101,14 +95,14 @@ func (c *chatClient) sendMessage(ctx context.Context, prompt string) (*responses
 	return resp, nil
 }
 
-func (c *chatClient) sendMessageWithHistory(ctx context.Context, history responses.ResponseInputParam) (*responses.Response, error) {
+func (c *chatClient) sendMessageWithHistory(ctx context.Context, history conversationHistory) (*responses.Response, error) {
 	resp, err := c.llmClient.Responses.New(ctx, responses.ResponseNewParams{
 		Model:           c.modelChoice,
 		Temperature:     openai.Float(c.modelTemperature),
 		MaxOutputTokens: openai.Int(c.modelMaxOutputTokens),
 		Store:           openai.Bool(false),
 		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: history,
+			OfInputItemList: responses.ResponseInputParam(history),
 		},
 	})
 	if err != nil {
@@ -121,9 +115,20 @@ func (c *chatClient) sendMessageWithHistory(ctx context.Context, history respons
 func outputAsInput(output []responses.ResponseOutputItemUnion) []responses.ResponseInputItemUnionParam {
 	input := make([]responses.ResponseInputItemUnionParam, 0, len(output))
 	for _, item := range output {
+		// Reasoning isn't useful across turns here, and with Store:false it comes
+		// back without its encrypted payload anyway.
+		if item.Type == "reasoning" {
+			continue
+		}
+		raw := item.RawJSON()
+		if raw == "" {
+			slog.Warn("output item has no raw JSON", slog.String("type", item.Type))
+			continue
+		}
 		var converted responses.ResponseInputItemUnion
-		if err := json.Unmarshal([]byte(item.RawJSON()), &converted); err != nil {
-			panic(err)
+		if err := json.Unmarshal([]byte(raw), &converted); err != nil {
+			slog.Warn("skipping unconvertible output item", slog.String("type", item.Type), slog.Any("error", err))
+			continue
 		}
 		input = append(input, converted.ToParam())
 	}

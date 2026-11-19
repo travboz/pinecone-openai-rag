@@ -20,7 +20,7 @@ var (
 )
 
 var (
-	MaxOutputTokens int64     = 500
+	MaxOutputTokens int64     = 1024
 	W               io.Writer = os.Stdout
 
 	EmbeddingModel     string  = "llama-text-embed-v2"
@@ -78,26 +78,12 @@ func main() {
 	idx, err := pc.client.DescribeIndex(ctx, IndexName)
 	handleError(err, "describe index")
 
-	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host}
+	indexConnParams := pinecone.NewIndexConnParams{Host: idx.Host, Namespace: "all-gross"}
 
 	// Create the actual connection to the flamehamster database on Pinecone.
 	idxConnection, err := pc.client.Index(indexConnParams)
 	handleError(err, "index connection")
 	defer idxConnection.Close()
-
-	// Creating a new namespace to insert every document's chunks.
-	ns, err := pc.createNewNamespace(ctx, idxConnection, GrossAppPineconeNS)
-	if err != nil {
-		switch err {
-		case ErrNamespaceAlreadyExists: // index already exists, carry on
-			slog.Info("no operation", slog.String("reason", err.Error()))
-		default:
-			fmt.Fprintf(W, "failed to create namespace: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	nsIdxConnection := idxConnection.WithNamespace(ns)
 
 	if CreateRecords {
 		// Upsert all document chunks into Pinecone using the new namespace.
@@ -106,7 +92,7 @@ func main() {
 		handleError(err, "unable to chunk files in directory")
 
 		// Iterate over chunks and upsert into Pinecone.
-		err = pc.upsertChunkMapToIndex(ctx, nsIdxConnection, chunksMap)
+		err = pc.upsertChunkMapToIndex(ctx, idxConnection, chunksMap)
 		handleError(err, "unable to upsert chunks to index")
 	}
 
@@ -118,60 +104,57 @@ func main() {
 		MaxOutputTokens,
 	)
 
-	// ? Up to here: Start chatbot interaction.
+	// * Start chatbot interaction.
 	scanner := bufio.NewScanner(os.Stdin)
-
-	systemInstruction := "You are an AI customer support technician who is knowledgeable about software products created by the company called GROSS. One such product is a web browser called Flamehamster."
-	initialAssistantMessage := "How can I help you today?"
-	// Order is {relevant_docs} then {original_user_input}.
-	retrievalAugmentPrompt := "Here are excerpts from the official Flamehamster web browser documentation: %s. Use whatever info from the above documentation excerpts (and no other info) to answer the following query: %s"
-
-	// Printing How can I help you:
-	fmt.Printf(TextColourAssistant+"Assistant: %s\n", initialAssistantMessage)
-
-	// Getting first user input:
-	fmt.Print(TextColourUser + "User: ")
-	scanner.Scan()
-	userInput := scanner.Text()
 
 	// Creating initial history:
 	var history conversationHistory
 
-	history.AddSystemInstruction(systemInstruction)
-	history.AddAssistantMessage(initialAssistantMessage)
+	history.AddSystemInstruction(SystemInstructions)
+	history.AddAssistantMessage(InitialAssistantMessage)
+
+	// Printing 'How can I help you':
+	fmt.Printf(TextColourAssistant+"Assistant: %s\n", InitialAssistantMessage)
 
 	// * Chat loop:
-	for userInput != "exit" {
+	for {
+		fmt.Fprint(W, TextColourUser+"User: ")
 
-		// Process relevant results from vector db:
+		if !scanner.Scan() {
+			fmt.Fprintln(W) // EOF (Ctrl+D) or read error
+			break
+		}
+
+		userInput := scanner.Text()
+		if userInput == "exit" {
+			break
+		}
+
+		if userInput == "" {
+			continue // don't spend a request on an empty turn
+		}
+
+		// Find and process relevant results from vector db:
 		relevantKnowledge, err := pc.FetchRelevantKnowledge(ctx, idxConnection, userInput)
 		handleError(err, "retrieving relevant chunks from pinecone")
 
-		augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantKnowledge, retrievalAugmentPrompt)
+		slog.Info("relevant knowledge retrieved", slog.String("knowledge", relevantKnowledge))
 
-		// Append augmented user input prompt to history.
+		// Augment user input prompt with retrieved, relevant text chunks:
+		augmentedPrompt := augmentUserInputWithRelevantKnowledge(userInput, relevantKnowledge, RetrievalAugmentPrompt)
+
+		// * Append augmented user prompt to history.
 		history.AddUserMessage(augmentedPrompt)
 
-		// * Chat interaction:
-		// Augment user input prompt with retrieved, relevant text chunks:
+		// Send augmented prompt off to LLM for a response.
 		response, err := chatClient.sendMessageWithHistory(ctx, history)
 		if err != nil {
-			slog.Error("generation failed", slog.Any("history", history))
+			slog.Error("generation failed", slog.Any("error", err), slog.Any("history", history))
 			os.Exit(1)
 		}
 
-		llmResponseText := fmt.Sprintf(TextColourAssistant+"Assistant: %s\n", response.OutputText())
-		fmt.Fprint(W, llmResponseText)
-
-		// Append LLM output response to history.
-		history = append(
-			history,
-			outputAsInput(response.Output)...,
-		)
-
-		fmt.Fprint(W, TextColourUser+"User: ")
-		scanner.Scan()
-		userInput = scanner.Text()
+		history.AddLLMResponse(response)
+		fmt.Fprintf(W, TextColourAssistant+"Assistant: %s\n", response.OutputText())
 	}
 
 	if err := scanner.Err(); err != nil {
